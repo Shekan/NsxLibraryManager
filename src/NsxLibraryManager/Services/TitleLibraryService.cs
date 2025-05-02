@@ -1003,15 +1003,30 @@ public class TitleLibraryService(
         try
         {
             logger.LogDebug("Processing file: {File}", libraryFile.FileName);
-            var libraryTitleResult = await fileInfoService.GetFileInfo(libraryFile.FileName, detailed: false);
-            if (libraryTitleResult.IsFailure)
+
+            // Attempt to extract metadata from the filename
+            if (fileInfoService.TryGetFileInfoFromFileName(libraryFile.FileName, out var fileInfo))
             {
-                logger.LogError("Unable to get File Information from file : {File}", libraryFile.FileName);
+                logger.LogDebug("Metadata successfully extracted from filename: {File}", libraryFile.FileName);
+            }
+            else
+            {
+                // Fallback: Access file contents if filename metadata extraction fails
+                logger.LogWarning("Failed to extract metadata from filename. Accessing file contents: {File}", libraryFile.FileName);
+                var fileInfoResult = await fileInfoService.GetFileInfo(libraryFile.FileName, detailed: false);
+                if (fileInfoResult.IsFailure)
+            {
+                    logger.LogError("Unable to extract metadata from file contents: {File}", libraryFile.FileName);
                 return null;
             }
+                fileInfo = fileInfoResult.Value;
+            }
 
-            var title = await AggregateLibraryTitle(libraryTitleResult.Value);
+            // Aggregate the library title using the extracted metadata
+            var title = await AggregateLibraryTitle(fileInfo);
             if (title is null) return title;
+
+            // Assign collection if applicable
             if (libraryFile.CollectionId > 0)
             {
                 var collection = _nsxLibraryDbContext.Collections.FirstOrDefault(x => x.Id == libraryFile.CollectionId);
@@ -1020,6 +1035,7 @@ public class TitleLibraryService(
                     title.Collection = collection;
                 }
             }
+
             _nsxLibraryDbContext.Add(title);
             await _nsxLibraryDbContext.SaveChangesAsync();
             return title;
